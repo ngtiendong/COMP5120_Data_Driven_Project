@@ -1,0 +1,12 @@
+{
+    "https://api.shinyapps.io": {
+        "server_url": "https://api.shinyapps.io",
+        "filename": "/Users/trhun/workspace/nothing/visualisation_course/life_expectancy_app",
+        "app_url": "https://tkhung.shinyapps.io/data_analysis/",
+        "app_id": 14679732,
+        "app_guid": null,
+        "title": "data_analysis",
+        "app_mode": "python-shiny",
+        "app_store_version": 1
+    }
+}
