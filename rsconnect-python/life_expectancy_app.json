@@ -1,11 +1,11 @@
 {
     "https://api.shinyapps.io": {
         "server_url": "https://api.shinyapps.io",
-        "filename": "/Users/ngtiendong/workspace/nothing/visualisation_course/life_expectancy_app",
-        "app_url": "https://ngtiendong.shinyapps.io/data_analysis/",
-        "app_id": 14679732,
+        "filename": "/Users/trhun/workspace/nothing/visualisation_course/life_expectancy_app",
+        "app_url": "https://ngtiendong.shinyapps.io/my-app/",
+        "app_id": 14816942,
         "app_guid": null,
-        "title": "data_analysis",
+        "title": "my-app",
         "app_mode": "python-shiny",
         "app_store_version": 1
     }
