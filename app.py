@@ -4,29 +4,18 @@ import plotly.express as px
 import numpy as np
 import json
 import os
+import seaborn as sns
+import matplotlib.pyplot as plt
+from io import BytesIO
+import base64
 
 # Load the dataset
 data = pd.read_csv('data/all_with_happiness.csv')
 
-# Add missing columns that might be needed for the analysis but don't exist
-missing_columns = {
-    'Region': 'Unknown',
-    'Income Group': 'Unknown', 
-    'Social Support': np.nan,
-    'Freedom': np.nan,
-    'Generosity': np.nan
-}
-
-for col_name, default_value in missing_columns.items():
-    if col_name not in data.columns:
-        data[col_name] = default_value
-
 # Generate factor choices dynamically from numeric columns
 # Exclude identifier and categorical columns
-exclude_columns = ['Country', 'Year', 'Region', 'Income Group', 'Code', 'Year_Code', 'Life Expectancy', 'Life Expectancy Male', 'Life Expectancy Female']
+exclude_columns = ['Country', 'Year', 'Code', 'Year_Code', 'Life Expectancy', 'Life Expectancy Male', 'Life Expectancy Female', 'Happiness Score']
 factor_choices = [col for col in data.columns.tolist() if col not in exclude_columns]
-
-print(f"Factor choices: {factor_choices}")
 
 # Load continents data
 with open('data/config/continents.json', 'r') as f:
@@ -51,20 +40,24 @@ app_ui = ui.page_fluid(
                     ui.h4("Map Controls"),
                     ui.input_slider("year_range_map", "Select Year Range", 
                                   min=min(year_choices), max=max(year_choices), 
-                                  value=[min(year_choices), max(year_choices)]),
+                                  value=[min(year_choices), max(year_choices)], step=1),
                     ui.input_checkbox("show_average", "Show Average Over Range", value=True),
                     ui.input_select("color_scale", "Color Scale", 
                                   choices=["Viridis", "Plasma", "Blues", "Reds", "Greens"],
                                   selected="Viridis"),
                     ui.hr(),
                     ui.h4("Country Details"),
-                    ui.input_select("country1", "Select a Country", choices=country_choices),
-                    ui.output_ui("country_details")
+                    ui.input_select("country1", "Select a Country", choices=country_choices, selected="Vietnam"),
+                    ui.output_ui("country_details"),
+                    ui.hr(),
+                    ui.h4("Select Factor for Color Intensity"),
+                    ui.input_radio_buttons("factor_radio", "Select Factor", 
+                                         choices=["Life Expectancy", "Happiness Score", "GDP per Capita"],
+                                         selected="Life Expectancy",
+                                         inline=True)
                 ),
                 ui.column(9,
-                    ui.h3("Life Expectancy World Map"),
-                    ui.output_ui("world_map_plot"),
-                    ui.p("The map shows life expectancy, happiness score, and GDP (Million $) across different countries. Hover over a country to see details.")
+                    ui.output_ui("world_map_plot")
                 )
             )
         ),
@@ -77,15 +70,10 @@ app_ui = ui.page_fluid(
                     ui.input_select("view_type", "View Type", 
                                   choices=["Country View", "Continent View"],
                                   selected="Country View"),
-                    # Show both inputs but only use the relevant one in the server function
-                    ui.input_select("country2", "Select a Country", choices=country_choices),
-                    ui.input_select("continent2", "Select a Continent", choices=continent_choices),
+                    ui.output_ui("dynamic_selector"),
                     ui.input_slider("years_range2", "Year Range", 
                                    min=min(year_choices), max=max(year_choices), 
-                                   value=[min(year_choices), max(year_choices)]),
-                    ui.hr(),
-                    ui.input_radio_buttons("plot_type2", "Plot Type", 
-                                         ["Line Chart", "Bar Chart", "Scatter Plot"])
+                                   value=[min(year_choices), max(year_choices)], step=1)
                 ),
                 ui.column(9,
                     ui.h3("Happiness, GDP, and Life Expectancy Trends"),
@@ -94,45 +82,39 @@ app_ui = ui.page_fluid(
             )
         ),
 
-        # Tab 3 - Factor Indicators
-        ui.nav_panel("Factor Indicators", 
+        # Tab 3 - Factors Indicator
+        ui.nav_panel("Factors Indicator", 
             ui.row(
                 ui.column(3,
                     ui.h4("Controls"),
                     ui.input_select("view_type3", "View Type", 
                                   choices=["Country View", "Continent View"],
                                   selected="Country View"),
-                    ui.input_select("country3", "Select a Country", choices=country_choices),
-                    ui.input_select("continent3", "Select a Continent", choices=continent_choices),
+                    ui.output_ui("dynamic_selector3"),
                     ui.input_slider("years_range3", "Year Range", 
                                    min=min(year_choices), max=max(year_choices), 
-                                   value=[min(year_choices), max(year_choices)]),
+                                   value=[min(year_choices), max(year_choices)], step=1),
                     ui.hr(),
                     ui.input_selectize("factors3", "Select Factors to Visualize", 
                                      choices=factor_choices,
                                      multiple=True,
-                                     selected=None),
+                                     selected=["GDP per Capita", "Government Health Expenditure", "CO2 Emissions Total", "Happiness Score"]),
                     ui.hr(),
                 ),
                 ui.column(9,
                     ui.h3("Time Series Analysis: Factors Affecting Life Expectancy"),
                     ui.output_ui("economic_plot"),
                     ui.hr(),
-                    ui.h4("Spider Charts: Factor Impact on Life Expectancy"),
+                    ui.h4("Spider Chart: Factor Impact on Life Expectancy"),
                     ui.row(
                         ui.column(12, ui.output_ui("spider_total")),
-                    ),
-                    ui.h4(""),
-                    ui.row(
-                        ui.column(6, ui.output_ui("spider_male")),
-                        ui.column(6, ui.output_ui("spider_female"))
                     )
                 )
             )
         ),
         
         # Tab 4 - Comparative Analysis
-        ui.nav_panel("Life Expectancy Affected by Multiple Factors", 
+        ui.nav_panel("Factors Indicator by Top Countries", 
             ui.row(
                 ui.column(3,
                     ui.h4("Country Selection Controls"),
@@ -144,28 +126,48 @@ app_ui = ui.page_fluid(
                                   selected="10"),
                     ui.input_slider("years_range4", "Year Range for Ranking", 
                                    min=min(year_choices), max=max(year_choices), 
-                                   value=[min(year_choices), max(year_choices)]),
+                                   value=[min(year_choices), max(year_choices)], step=1),
                     ui.hr(),
                     ui.input_selectize("factors4", "Select Factors to Visualize", 
                                      choices=factor_choices,
                                      multiple=True,
-                                     selected=None),
+                                     selected=["GDP per Capita", "GDP", "Government Health Expenditure", "CO2 Emissions Total", "Happiness Score"]),
                     ui.hr(),
                     ui.output_ui("selected_countries_list")
                 ),
                 ui.column(9,
-                    ui.h3("Time Series Analysis: Top/Bottom Countries by Life Expectancy"),
-                    ui.output_ui("comparison_time_series"),
+                    ui.output_ui("comparison_correlation_plot")
+                )
+            )
+        ),
+        
+        # Tab 5 - Predictive Analysis
+        ui.nav_panel("Predictive Analysis using ML", 
+            ui.row(
+                ui.column(3,
+                    ui.h4("Regression Controls"),
+                    ui.input_selectize("regression_factors", "Select Factors for Regression", 
+                                     choices=factor_choices,
+                                     multiple=True,
+                                     selected=["GDP per Capita", "Government Health Expenditure", "GDP", "Total Health Expenditure", "CO2 Emissions Total", "CO2 Emissions Agriculture"]),
+                    ui.input_action_button("run_regression", "Run Regression Analysis"),
                     ui.hr(),
-                    ui.h4("Spider Charts: Factor Impact Comparison"),
-                    ui.row(
-                        ui.column(12, ui.output_ui("comparison_spider_total")),
-                    ),
-                    ui.h4(""),
-                    ui.row(
-                        ui.column(6, ui.output_ui("comparison_spider_male")),
-                        ui.column(6, ui.output_ui("comparison_spider_female"))
-                    )
+                    ui.h4("Regression Results"),
+                    ui.output_ui("regression_results")
+                ),
+                ui.column(9,
+                    ui.h3("Predictive Analysis: Factors Affecting Life Expectancy & Happiness"),
+                    ui.h4("Life Expectancy Prediction"),
+                    ui.output_ui("life_expectancy_plot"),
+                    ui.hr(),
+                    ui.h4("Happiness Score Prediction"),
+                    ui.output_ui("happiness_prediction_plot"),
+                    ui.hr(),
+                    ui.h4("Feature Importance Comparison"),
+                    ui.output_ui("feature_importance"),
+                    ui.hr(),
+                    ui.h4("Correlation Analysis"),
+                    ui.output_ui("correlation_results")
                 )
             )
         )
@@ -179,15 +181,15 @@ def server(input, output, session):
     def world_map_plot():
         # Get slider values (these should already be initialized to min/max of year_choices)
         year_min, year_max = input.year_range_map()
+        year_min = int(year_min)
+        year_max = int(year_max)
         show_average = input.show_average()
-        
+        selected_factor = input.factor_radio()
+
         # Filter data for the selected year range
         year_data = data[(data['Year'] >= year_min) & (data['Year'] <= year_max)]
         
-        # Check if we have any data to display
         if year_data.empty:
-            print("Year data is empty")
-            # Create an empty map with a message if no data available
             fig = px.choropleth(
                 title="No data available for the selected year range"
             )
@@ -200,47 +202,51 @@ def server(input, output, session):
                 # Calculate average life expectancy for each country in the selected range
                 # Using more robust aggregation
                 numeric_cols = ['Life Expectancy', 'Happiness Score', 'GDP per Capita']
-                categorical_cols = ['Region', 'Income Group']
-                # print(year_data.columns)
-                # First handle numeric columns with mean
-                avg_numeric = year_data.groupby('Country')[numeric_cols].mean()
+                # categorical_cols = ['Region', 'Income Group']
+                
+                # First handle numeric columns with mean of values > 0
+                def mean_positive(series):
+                    positive_values = series[series > 0]
+                    return positive_values.mean() if len(positive_values) > 0 else 0
+                
+                avg_numeric = year_data.groupby('Country')[numeric_cols].agg(mean_positive)
                 
                 # Then handle categorical columns by taking first non-null value
                 # Use a lambda function to prevent string concatenation issues
-                avg_categorical = year_data.groupby('Country').agg({
-                    col: lambda x: x.iloc[0] if len(x) > 0 else None 
-                    for col in categorical_cols
-                })
+                # avg_categorical = year_data.groupby('Country').agg({
+                #     col: lambda x: x.iloc[0] if len(x) > 0 else None 
+                #     for col in categorical_cols
+                # })
                 
                 # Combine the results
-                avg_data = pd.concat([avg_numeric, avg_categorical], axis=1).reset_index()
+                avg_data = pd.concat([avg_numeric], axis=1).reset_index()
                 
                 # Create title with range information
-                title = f"Average Life Expectancy by Country ({int(year_min)}-{int(year_max)})"
+                title = f"Average Info (Life Expectancy, GDP, Happiness Score) by Country ({int(year_min)}-{int(year_max)})"
                 plot_data = avg_data
             except Exception as e:
                 # Fallback to using the most recent year if aggregation fails
                 print(f"Error in aggregation: {e}")  # For debugging
-                title = f"Life Expectancy by Country ({int(year_max)}) - Showing latest year"
+                title = f"Life Expectancy, GDP, Happiness Score by Country ({int(year_max)}) - Showing latest year"
                 plot_data = year_data[year_data['Year'] == year_max]
         else:
             # Use the most recent year in the range
-            title = f"Life Expectancy by Country ({int(year_max)})"
+            title = f"Life Expectancy, GDP, Happiness Score by Country ({int(year_max)})"
             plot_data = year_data[year_data['Year'] == year_max]
             
             # If no data for the most recent year, use the last available year
             if plot_data.empty and not year_data.empty:
                 last_available_year = year_data['Year'].max()
                 plot_data = year_data[year_data['Year'] == last_available_year]
-                title = f"Life Expectancy by Country ({int(last_available_year)}) - Most recent available data"
+                title = f"Life Expectancy, GDP, Happiness Score by Country ({int(last_available_year)}) - Most recent available data"
 
         # Create a choropleth map
         fig = px.choropleth(
             plot_data,
-            locations="Country",  # country names in dataset
-            locationmode="country names",  # set of locations match entries in `locations`
-            color="Life Expectancy",  # value in column 'Life Expectancy' determines color
-            hover_name="Country",  # column to add to hover information
+            locations="Country",
+            locationmode="country names",
+            color=selected_factor,
+            hover_name="Country",
             color_continuous_scale=input.color_scale().lower(),
             title=title,
             hover_data={
@@ -248,7 +254,7 @@ def server(input, output, session):
                 "Happiness Score": ":.2f", 
                 "GDP per Capita": ":,.0f"
             } if all(col in plot_data.columns for col in ["Life Expectancy", "Happiness Score", "GDP per Capita"]) else None,
-            projection="natural earth"  # map projection type
+            projection="natural earth"
         )
         
         # Improve layout
@@ -259,9 +265,6 @@ def server(input, output, session):
                 projection_type='equirectangular'
             ),
             margin={"r":0,"t":50,"l":0,"b":0},
-            coloraxis_colorbar={
-                'title': 'Life Expectancy (years)'
-            },
             height=600
         )
 
@@ -291,14 +294,15 @@ def server(input, output, session):
             if show_average:
                 # Get only numeric columns we need for averaging
                 columns_to_average = ['Life Expectancy', 'Happiness Score', 'GDP per Capita']
-                numeric_data = country_data[columns_to_average]
                 
-                # Calculate averages
-                avg_data = numeric_data.mean(skipna=True)
-
-                life_exp = avg_data['Life Expectancy']
-                happiness = avg_data['Happiness Score']
-                gdp = avg_data['GDP per Capita']
+                # Calculate averages excluding zero values
+                def mean_positive(series):
+                    positive_values = series[series > 0]
+                    return positive_values.mean() if len(positive_values) > 0 else 0
+                
+                life_exp = mean_positive(country_data['Life Expectancy'])
+                happiness = mean_positive(country_data['Happiness Score'])
+                gdp = mean_positive(country_data['GDP per Capita'])
                 
                 return ui.div(
                     ui.p("📍 Country:", ui.strong(f" {selected_country}"), style="margin-bottom: 8px;"),
@@ -336,95 +340,62 @@ def server(input, output, session):
                      style="color: #666; font-style: italic;")
             )
         
+    # Tab 2 - Dynamic selector for country/continent
+    @output
+    @render.ui
+    def dynamic_selector():
+        view_type = input.view_type()
+        
+        if view_type == "Country View":
+            return ui.input_select("selected_location", "Select a Country", 
+                                 choices=country_choices, selected="Vietnam")
+        else:
+            return ui.input_select("selected_location", "Select a Continent", 
+                                 choices=continent_choices, selected="Asia")
+    
     # Tab 2 - Happiness Plot  
     @output
     @render.ui
     def happiness_plot():
         view_type = input.view_type()
         year_min, year_max = input.years_range2()
-        plot_type = input.plot_type2()
+        
+        # Get the selected location from the dynamic selector
+        try:
+            selected_location = input.selected_location()
+        except:
+            # If the input doesn't exist yet, return a loading message
+            fig = px.scatter(title="Loading...")
+            fig.add_annotation(text="Please select a location", showarrow=False, font=dict(size=20))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
         
         if view_type == "Country View":
-            # Original country view functionality
-            selected_country = input.country2()
-            
             # Filter data for the selected country and years
-            filtered_data = data[(data['Country'] == selected_country) & 
+            filtered_data = data[(data['Country'] == selected_location) & 
                                (data['Year'] >= year_min) & 
                                (data['Year'] <= year_max)]
             
             if filtered_data.empty:
-                # Return an empty plot with a message
-                fig = px.scatter(title=f"No data available for {selected_country}")
+                fig = px.scatter(title=f"No data available for {selected_location}")
                 fig.add_annotation(text="No data available", showarrow=False, font=dict(size=20))
                 return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
             
-            # Normalize the data for better visualization (scale to 0-100)
-            normalized_data = filtered_data.copy()
-            normalized_data['Happiness Score Normalized'] = (filtered_data['Happiness Score'] / 10) * 100
-            normalized_data['GDP per Capita Normalized'] = (filtered_data['GDP per Capita'] / filtered_data['GDP per Capita'].max()) * 100
-            normalized_data['Life Expectancy Normalized'] = (filtered_data['Life Expectancy'] / filtered_data['Life Expectancy'].max()) * 100
+            # Check if required columns exist
+            required_columns = ['Life Expectancy', 'Happiness Score', 'GDP per Capita']
+            missing_columns = [col for col in required_columns if col not in filtered_data.columns]
             
-            if plot_type == "Line Chart":
-                # Create multi-line chart
-                fig = px.line(title=f"Multi-Factor Analysis for {selected_country} ({year_min}-{year_max})")
-                
-                # Add three lines
-                fig.add_scatter(x=normalized_data['Year'], y=normalized_data['Happiness Score Normalized'], 
-                              mode='lines+markers', name='Happiness Score', line=dict(color='blue'))
-                fig.add_scatter(x=normalized_data['Year'], y=normalized_data['GDP per Capita Normalized'], 
-                              mode='lines+markers', name='GDP per Capita', line=dict(color='green'))
-                fig.add_scatter(x=normalized_data['Year'], y=normalized_data['Life Expectancy Normalized'], 
-                              mode='lines+markers', name='Life Expectancy', line=dict(color='red'))
-                
-                fig.update_layout(
-                    xaxis_title="Year",
-                    yaxis_title="Normalized Scale (0-100)",
-                    yaxis=dict(range=[0, 100]),
-                    hovermode="x unified"
-                )
-                
-            elif plot_type == "Bar Chart":
-                # Reshape data for grouped bar chart
-                import pandas as pd
-                melted_data = pd.melt(normalized_data, 
-                                    id_vars=['Year'], 
-                                    value_vars=['Happiness Score Normalized', 'GDP per Capita Normalized', 'Life Expectancy Normalized'],
-                                    var_name='Metric', value_name='Normalized Value')
-                
-                fig = px.bar(melted_data, x="Year", y="Normalized Value", color="Metric",
-                           title=f"Multi-Factor Analysis for {selected_country} ({year_min}-{year_max})",
-                           barmode='group')
-                
-                fig.update_layout(yaxis=dict(range=[0, 100]))
-                
-            else:  # Scatter Plot
-                # Create scatter plot matrix with cleaner names
-                scatter_data = normalized_data.copy()
-                scatter_data['Happiness Score'] = scatter_data['Happiness Score Normalized']
-                scatter_data['GDP per Capita'] = scatter_data['GDP per Capita Normalized']
-                scatter_data['Life Expectancy'] = scatter_data['Life Expectancy Normalized']
-                
-                fig = px.scatter_matrix(scatter_data, 
-                                      dimensions=["Happiness Score", "GDP per Capita", "Life Expectancy"],
-                                      title=f"Correlation Matrix for {selected_country} ({year_min}-{year_max})")
-                
-                fig.update_layout(
-                    xaxis=dict(range=[0, 100]),
-                    yaxis=dict(range=[0, 100]),
-                    xaxis2=dict(range=[0, 100]),
-                    yaxis2=dict(range=[0, 100]),
-                    xaxis3=dict(range=[0, 100]),
-                    yaxis3=dict(range=[0, 100])
-                )
+            if missing_columns:
+                fig = px.scatter(title=f"Missing data columns for {selected_location}")
+                fig.add_annotation(text=f"Missing: {', '.join(missing_columns)}", showarrow=False, font=dict(size=20))
+                return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+            
+            plot_data = filtered_data
+            title_location = selected_location
 
         else:
             # Continent view - calculate average for countries in the continent
-            selected_continent = input.continent2()
-            
-            # Get countries in the selected continent
-            if selected_continent in continents_data:
-                continent_countries = continents_data[selected_continent]
+            if selected_location in continents_data:
+                continent_countries = continents_data[selected_location]
                 
                 # Filter for countries in the continent and the selected years
                 continent_data = data[
@@ -434,101 +405,121 @@ def server(input, output, session):
                 ]
                 
                 if continent_data.empty:
-                    # Return an empty plot with a message
-                    fig = px.scatter(title=f"No data available for countries in {selected_continent}")
+                    fig = px.scatter(title=f"No data available for countries in {selected_location}")
                     fig.add_annotation(text="No data available", showarrow=False, font=dict(size=20))
                     return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
                 
-                # Calculate average by year for the continent - use all numeric columns
-                agg_dict = {col: 'mean' for col in factor_choices if col in continent_data.columns}
+                # Check if required columns exist
+                required_columns = ['Life Expectancy', 'Happiness Score', 'GDP per Capita']
+                missing_columns = [col for col in required_columns if col not in continent_data.columns]
+                
+                if missing_columns:
+                    fig = px.scatter(title=f"Missing data columns for {selected_location}")
+                    fig.add_annotation(text=f"Missing: {', '.join(missing_columns)}", showarrow=False, font=dict(size=20))
+                    return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+                
+                # Calculate average for the continent - only include columns that exist
+                available_factor_cols = [col for col in factor_choices if col in continent_data.columns]
+                agg_dict = {col: 'mean' for col in available_factor_cols}
+                
+                # Ensure we always include the required columns in aggregation
+                for col in required_columns:
+                    if col in continent_data.columns:
+                        agg_dict[col] = 'mean'
+                
                 plot_data = continent_data.groupby('Year').agg(agg_dict).reset_index()
                 
-                # Normalize the data
-                plot_data['Happiness Score Normalized'] = (plot_data['Happiness Score'] / 10) * 100
-                plot_data['GDP per Capita Normalized'] = (plot_data['GDP per Capita'] / plot_data['GDP per Capita'].max()) * 100
-                plot_data['Life Expectancy Normalized'] = (plot_data['Life Expectancy'] / plot_data['Life Expectancy'].max()) * 100
+                # Check if aggregated data has required columns
+                if not all(col in plot_data.columns for col in required_columns):
+                    fig = px.scatter(title=f"Insufficient data for {selected_location}")
+                    fig.add_annotation(text="Missing required columns after aggregation", showarrow=False, font=dict(size=20))
+                    return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
                 
-                if plot_type == "Line Chart":
-                    # Create multi-line chart
-                    fig = px.line(title=f"Multi-Factor Analysis for {selected_continent} ({year_min}-{year_max})")
-                    
-                    # Add three lines
-                    fig.add_scatter(x=plot_data['Year'], y=plot_data['Happiness Score Normalized'], 
-                                  mode='lines+markers', name='Happiness Score', line=dict(color='blue'))
-                    fig.add_scatter(x=plot_data['Year'], y=plot_data['GDP per Capita Normalized'], 
-                                  mode='lines+markers', name='GDP per Capita', line=dict(color='green'))
-                    fig.add_scatter(x=plot_data['Year'], y=plot_data['Life Expectancy Normalized'], 
-                                  mode='lines+markers', name='Life Expectancy', line=dict(color='red'))
-                    
-                    fig.update_layout(
-                        xaxis_title="Year",
-                        yaxis_title="Normalized Scale (0-100)",
-                        yaxis=dict(range=[0, 100]),
-                        hovermode="x unified"
-                    )
-                    
-                elif plot_type == "Bar Chart":
-                    # Reshape data for grouped bar chart
-                    import pandas as pd
-                    melted_data = pd.melt(plot_data, 
-                                        id_vars=['Year'], 
-                                        value_vars=['Happiness Score Normalized', 'GDP per Capita Normalized', 'Life Expectancy Normalized'],
-                                        var_name='Metric', value_name='Normalized Value')
-                    
-                    fig = px.bar(melted_data, x="Year", y="Normalized Value", color="Metric",
-                               title=f"Multi-Factor Analysis for {selected_continent} ({year_min}-{year_max})",
-                               barmode='group')
-                    
-                    fig.update_layout(yaxis=dict(range=[0, 100]))
-                
-                else:  # Scatter Plot
-                    # Create scatter plot matrix with cleaner names
-                    scatter_data = plot_data.copy()
-                    scatter_data['Happiness Score'] = scatter_data['Happiness Score Normalized']
-                    scatter_data['GDP per Capita'] = scatter_data['GDP per Capita Normalized']
-                    scatter_data['Life Expectancy'] = scatter_data['Life Expectancy Normalized']
-                    
-                    fig = px.scatter_matrix(scatter_data, 
-                                          dimensions=["Happiness Score", "GDP per Capita", "Life Expectancy"],
-                                          title=f"Correlation Matrix for {selected_continent} ({year_min}-{year_max})")
-            
-                    # Set axis ranges
-                    fig.update_layout(
-                        xaxis=dict(range=[0, 100]),
-                        yaxis=dict(range=[0, 100]),
-                        xaxis2=dict(range=[0, 100]),
-                        yaxis2=dict(range=[0, 100]),
-                        xaxis3=dict(range=[0, 100]),
-                        yaxis3=dict(range=[0, 100])
-                    )
-            
+                title_location = selected_location
             else:
-                # Return an empty plot with a message for invalid continent
-                fig = px.scatter(title=f"No data available for {selected_continent}")
+                fig = px.scatter(title=f"No data available for {selected_location}")
                 fig.add_annotation(text="Invalid continent selection", showarrow=False, font=dict(size=20))
                 return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-                
-        # Add better labels and formatting
-        if plot_type != "Scatter Plot":
-            fig.update_layout(
-                hovermode="closest",
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1
-                )
-            )
-        else:
-            # For scatter plots, add height and width separately
-            fig.update_layout(
-                height=700,  # Scatter matrix needs more height
-                width=900
-            )
+        
+        # Create three separate plots without normalization
+        plot_data_viz = plot_data.copy()
+        
+        # Replace 0 values with NaN for better visualization
+        plot_data_viz['Happiness Score'] = plot_data_viz['Happiness Score'].replace(0, np.nan)
+        plot_data_viz['GDP per Capita'] = plot_data_viz['GDP per Capita'].replace(0, np.nan)
+        plot_data_viz['Life Expectancy'] = plot_data_viz['Life Expectancy'].replace(0, np.nan)
+        
+        # Create subplot figure with 3 plots
+        from plotly.subplots import make_subplots
+        
+        fig = make_subplots(
+            rows=3, cols=1,
+            subplot_titles=(
+                f"Life Expectancy for {title_location} ({year_min}-{year_max})",
+                f"GDP per Capita for {title_location} ({year_min}-{year_max})",
+                f"Happiness Score for {title_location} ({year_min}-{year_max})"
+            ),
+            vertical_spacing=0.1
+        )
+        
+        # Add Life Expectancy plot
+        fig.add_scatter(
+            x=plot_data_viz['Year'], 
+            y=plot_data_viz['Life Expectancy'],
+            mode='lines+markers', 
+            name='Life Expectancy',
+            line=dict(color='red', width=3),
+            row=1, col=1
+        )
+        
+        # Add GDP per Capita plot
+        fig.add_scatter(
+            x=plot_data_viz['Year'], 
+            y=plot_data_viz['GDP per Capita'],
+            mode='lines+markers', 
+            name='GDP per Capita',
+            line=dict(color='green', width=3),
+            row=2, col=1
+        )
+        
+        # Add Happiness Score plot
+        fig.add_scatter(
+            x=plot_data_viz['Year'], 
+            y=plot_data_viz['Happiness Score'],
+            mode='lines+markers', 
+            name='Happiness Score',
+            line=dict(color='blue', width=3),
+            row=3, col=1
+        )
+        
+        # Update layout
+        fig.update_layout(
+            height=900
+        )
+        
+        # Update y-axis labels
+        fig.update_yaxes(title_text="Years", row=1, col=1)
+        fig.update_yaxes(title_text="USD (Millions)", row=2, col=1)
+        fig.update_yaxes(title_text="Score (0-10)", row=3, col=1)
+        
+        # Update x-axis labels
+        fig.update_xaxes(title_text="Year", row=3, col=1)
         
         return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
         
+    # Tab 3 - Dynamic selector for country/continent
+    @output
+    @render.ui
+    def dynamic_selector3():
+        view_type = input.view_type3()
+        
+        if view_type == "Country View":
+            return ui.input_select("selected_location3", "Select a Country", 
+                                 choices=country_choices, selected="Vietnam")
+        else:
+            return ui.input_select("selected_location3", "Select a Continent", 
+                                 choices=continent_choices, selected="Asia")
+
     # Tab 3 - Economic Plot
     @output
     @render.ui
@@ -543,27 +534,32 @@ def server(input, output, session):
             fig.add_annotation(text="Select factors from the control panel", showarrow=False, font=dict(size=20))
             return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
         
+        # Get the selected location from the dynamic selector
+        try:
+            selected_location = input.selected_location3()
+        except:
+            # If the input doesn't exist yet, return a loading message
+            fig = px.scatter(title="Loading...")
+            fig.add_annotation(text="Please select a location", showarrow=False, font=dict(size=20))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+        
         if view_type == "Country View":
-            selected_country = input.country3()
-            
             # Filter data for the selected country and years
-            filtered_data = data[(data['Country'] == selected_country) & 
+            filtered_data = data[(data['Country'] == selected_location) & 
                                (data['Year'] >= year_min) & 
                                (data['Year'] <= year_max)]
             
             if filtered_data.empty:
-                fig = px.scatter(title=f"No data available for {selected_country}")
+                fig = px.scatter(title=f"No data available for {selected_location}")
                 fig.add_annotation(text="No data available", showarrow=False, font=dict(size=20))
                 return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
             
-            title_location = selected_country
+            title_location = selected_location
             plot_data = filtered_data
             
         else:  # Continent View
-            selected_continent = input.continent3()
-            
-            if selected_continent in continents_data:
-                continent_countries = continents_data[selected_continent]
+            if selected_location in continents_data:
+                continent_countries = continents_data[selected_location]
                 
                 # Filter for countries in the continent and the selected years
                 continent_data = data[
@@ -573,25 +569,31 @@ def server(input, output, session):
                 ]
                 
                 if continent_data.empty:
-                    fig = px.scatter(title=f"No data available for countries in {selected_continent}")
+                    fig = px.scatter(title=f"No data available for countries in {selected_location}")
                     fig.add_annotation(text="No data available", showarrow=False, font=dict(size=20))
                     return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
                 
-                # Calculate average by year for the continent
-                agg_dict = {col: 'mean' for col in factor_choices if col in continent_data.columns}
+                # Calculate average by year for the continent - include Life Expectancy
+                agg_dict = {col: 'mean' for col in factor_choices + ['Life Expectancy'] if col in continent_data.columns}
                 plot_data = continent_data.groupby('Year').agg(agg_dict).reset_index()
                 
-                title_location = selected_continent
+                title_location = selected_location
             else:
-                fig = px.scatter(title=f"No data available for {selected_continent}")
+                fig = px.scatter(title=f"No data available for {selected_location}")
                 fig.add_annotation(text="Invalid continent selection", showarrow=False, font=dict(size=20))
                 return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
         
+        # Replace 0 values with NaN for better visualization
+        plot_data_viz = plot_data.copy()
+        for factor in list(selected_factors) + ['Life Expectancy']:
+            if factor in plot_data_viz.columns:
+                plot_data_viz[factor] = plot_data_viz[factor].replace(0, np.nan)
+        
         # Create time series line plot
-        fig = px.line(title=f"Time Series Analysis for {title_location} ({year_min}-{year_max})")
+        fig = px.line()
         
         # Add line for Life Expectancy (always shown as reference)
-        fig.add_scatter(x=plot_data['Year'], y=plot_data['Life Expectancy'], 
+        fig.add_scatter(x=plot_data_viz['Year'], y=plot_data_viz['Life Expectancy'], 
                       mode='lines+markers', name='Life Expectancy (Reference)', 
                       line=dict(color='red', width=3))
         
@@ -600,24 +602,36 @@ def server(input, output, session):
         
         # Add lines for selected factors
         for i, factor in enumerate(selected_factors):
-            if factor in plot_data.columns:
-                # Normalize factor to same scale as life expectancy for better comparison
-                if factor == 'Happiness Score':
-                    # Scale happiness score (0-10) to life expectancy range
-                    normalized_values = plot_data[factor] * (plot_data['Life Expectancy'].max() / 10)
-                elif factor == 'GDP per Capita':
-                    # Scale GDP to life expectancy range
-                    normalized_values = (plot_data[factor] / plot_data[factor].max()) * plot_data['Life Expectancy'].max()
-                else:
-                    # For other factors, scale to life expectancy range
-                    normalized_values = (plot_data[factor] / plot_data[factor].max()) * plot_data['Life Expectancy'].max()
+            if factor in plot_data_viz.columns:
+                # Get non-NaN values for scaling calculations
+                valid_factor_values = plot_data_viz[factor].dropna()
+                valid_life_exp_values = plot_data_viz['Life Expectancy'].dropna()
                 
-                line_style = dict(color=colors[i % len(colors)], width=2)
-                
-                # Remove special highlighting for affective factor
-                fig.add_scatter(x=plot_data['Year'], y=normalized_values, 
-                              mode='lines+markers', name=factor, 
-                              line=line_style)
+                if len(valid_factor_values) > 0 and len(valid_life_exp_values) > 0:
+                    # Normalize factor to same scale as life expectancy for better comparison
+                    if factor == 'Happiness Score':
+                        # Scale happiness score (0-10) to life expectancy range
+                        normalized_values = plot_data_viz[factor] * (valid_life_exp_values.max() / 10)
+                    elif factor == 'GDP per Capita':
+                        # Scale GDP to life expectancy range
+                        max_factor = valid_factor_values.max()
+                        if max_factor > 0:
+                            normalized_values = (plot_data_viz[factor] / max_factor) * valid_life_exp_values.max()
+                        else:
+                            normalized_values = plot_data_viz[factor]  # Keep original if max is 0
+                    else:
+                        # For other factors, scale to life expectancy range
+                        max_factor = valid_factor_values.max()
+                        if max_factor > 0:
+                            normalized_values = (plot_data_viz[factor] / max_factor) * valid_life_exp_values.max()
+                        else:
+                            normalized_values = plot_data_viz[factor]  # Keep original if max is 0
+                    
+                    line_style = dict(color=colors[i % len(colors)], width=2)
+                    
+                    fig.add_scatter(x=plot_data_viz['Year'], y=normalized_values, 
+                                  mode='lines+markers', name=factor, 
+                                  line=line_style)
         
         # Update layout
         fig.update_layout(
@@ -635,9 +649,13 @@ def server(input, output, session):
             width=900
         )
         
-        # Remove the annotation about most affective factor
-        
-        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+        return ui.div(
+            ui.HTML(fig.to_html(include_plotlyjs="cdn")),
+            ui.div(
+                ui.p(f"Time Series Analysis for {title_location} ({year_min}-{year_max})",
+                     style="text-align: center; font-size: 14px; color: #666; margin-top: 10px; font-style: italic;")
+            )
+        )
         
     # Tab 4 - Get selected countries based on ranking
     @reactive.Calc
@@ -687,10 +705,10 @@ def server(input, output, session):
         
         return country_list
     
-    # Tab 4 - Time Series Comparison
+    # Tab 4 - Correlation/Pair Plot Analysis
     @output
     @render.ui
-    def comparison_time_series():
+    def comparison_correlation_plot():
         countries = get_ranked_countries()
         selected_factors = input.factors4()
         year_min, year_max = input.years_range4()
@@ -717,48 +735,636 @@ def server(input, output, session):
             fig.add_annotation(text="No data available", showarrow=False, font=dict(size=20))
             return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
         
-        # Calculate average across all selected countries by year
-        agg_dict = {col: 'mean' for col in factor_choices if col in filtered_data.columns}
-        plot_data = filtered_data.groupby('Year').agg(agg_dict).reset_index()
+        # Prepare data for correlation analysis
+        correlation_cols = ['Life Expectancy'] + list(selected_factors)
+        corr_data = filtered_data[correlation_cols + ['Country']].copy()
         
-        title_text = f"Average for {rank_type.replace('Life Expectancy', '').strip()} {num_countries} Countries"
+        # Remove 0 values (which are placeholders for missing data) before analysis
+        for col in correlation_cols:
+            if col in corr_data.columns:
+                corr_data[col] = corr_data[col].replace(0, np.nan)
         
-        # Create time series line plot
-        fig = px.line(title=f"Time Series Analysis: {title_text} ({year_min}-{year_max})")
+        # Drop rows with any NaN values after replacing 0s
+        corr_data = corr_data.dropna(subset=correlation_cols)
         
-        # Add line for Life Expectancy (always shown as reference)
-        fig.add_scatter(x=plot_data['Year'], y=plot_data['Life Expectancy'], 
-                      mode='lines+markers', name='Life Expectancy (Reference)', 
-                      line=dict(color='red', width=3))
+        if corr_data.empty or len(corr_data) < 2:
+            fig = px.scatter(title="Insufficient data for correlation analysis")
+            fig.add_annotation(text="Need more data points (after removing 0 values)", showarrow=False, font=dict(size=20))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
         
-        # Color palette for factors
-        colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink']
+        title_text = f"{rank_type.replace('Life Expectancy', '').strip()} {num_countries} Countries"
         
-        # Add lines for selected factors
-        for i, factor in enumerate(selected_factors):
-            if factor in plot_data.columns:
-                # Normalize factor to same scale as life expectancy for better comparison
-                if factor == 'Happiness Score':
-                    # Scale happiness score (0-10) to life expectancy range
-                    normalized_values = plot_data[factor] * (plot_data['Life Expectancy'].max() / 10)
-                elif factor == 'GDP per Capita':
-                    # Scale GDP to life expectancy range
-                    normalized_values = (plot_data[factor] / plot_data[factor].max()) * plot_data['Life Expectancy'].max()
+        try:
+            # Set seaborn style
+            plt.style.use('default')
+            sns.set_style("whitegrid")
+            sns.set_palette("husl")
+            
+            # Create correlation matrix using seaborn (now with 0 values removed)
+            correlation_matrix = corr_data[correlation_cols].corr()
+            
+            # Create correlation heatmap using seaborn
+            fig_corr, ax_corr = plt.subplots(figsize=(10, 8))
+            
+            # Create mask for upper triangle
+            mask = np.triu(np.ones_like(correlation_matrix, dtype=bool))
+            
+            # Generate heatmap
+            sns.heatmap(
+                correlation_matrix, 
+                mask=mask,
+                annot=True, 
+                cmap='RdBu_r', 
+                center=0,
+                square=True,
+                linewidths=0.5,
+                cbar_kws={"shrink": 0.8},
+                fmt='.2f',
+                annot_kws={'size': 10}
+            )
+            
+            ax_corr.set_title(f'Correlation Matrix: {title_text} ({year_min}-{year_max})\n(Zero values excluded)', 
+                             fontsize=14, fontweight='bold', pad=20)
+            plt.xticks(rotation=45, ha='right')
+            plt.yticks(rotation=0)
+            plt.tight_layout()
+            
+            # Convert to base64 for HTML
+            buffer_corr = BytesIO()
+            fig_corr.savefig(buffer_corr, format='png', dpi=150, bbox_inches='tight')
+            buffer_corr.seek(0)
+            img_corr_b64 = base64.b64encode(buffer_corr.getvalue()).decode()
+            plt.close(fig_corr)
+            
+            # Create pair plot using seaborn if we have multiple factors
+            if len(selected_factors) > 1:
+                # Limit to most important factors for better visualization
+                plot_factors = ['Life Expectancy'] + list(selected_factors)[:4]  # Max 5 factors
+                pair_data = corr_data[plot_factors + ['Country']]
+                
+                # Create pair plot
+                fig_pair = plt.figure(figsize=(12, 10))
+                
+                # Use seaborn pairplot (data already has 0 values removed)
+                g = sns.pairplot(
+                    pair_data[plot_factors], 
+                    diag_kind='hist',
+                    plot_kws={'alpha': 0.6, 's': 30},
+                    diag_kws={'bins': 20, 'alpha': 0.7}
+                )
+                
+                g.fig.suptitle(f'Pair Plot: {title_text} ({year_min}-{year_max})\n(Zero values excluded)', 
+                              fontsize=14, fontweight='bold', y=1.02)
+                
+                # Add correlation coefficients to upper triangle
+                for i in range(len(plot_factors)):
+                    for j in range(i+1, len(plot_factors)):
+                        ax = g.axes[i, j]
+                        corr_val = correlation_matrix.loc[plot_factors[i], plot_factors[j]]
+                        ax.text(0.5, 0.5, f'r = {corr_val:.2f}', 
+                               transform=ax.transAxes, 
+                               ha='center', va='center',
+                               fontsize=12, fontweight='bold',
+                               bbox=dict(boxstyle="round,pad=0.3", 
+                                        facecolor='white', 
+                                        edgecolor='gray',
+                                        alpha=0.8))
+                        ax.set_xlabel('')
+                        ax.set_ylabel('')
+                
+                plt.tight_layout()
+                
+                # Convert to base64
+                buffer_pair = BytesIO()
+                g.fig.savefig(buffer_pair, format='png', dpi=150, bbox_inches='tight')
+                buffer_pair.seek(0)
+                img_pair_b64 = base64.b64encode(buffer_pair.getvalue()).decode()
+                plt.close(g.fig)
+                
+                pair_html = f'<img src="data:image/png;base64,{img_pair_b64}" style="width:100%; max-width:900px; height:auto;">'
+                
+            else:
+                # Single factor - create simple scatter plot with regression line
+                factor = selected_factors[0]
+                fig_scatter, ax_scatter = plt.subplots(figsize=(10, 6))
+                
+                # Create scatter plot with regression line (data already has 0 values removed)
+                sns.regplot(
+                    data=corr_data, 
+                    x=factor, 
+                    y='Life Expectancy',
+                    scatter_kws={'alpha': 0.6, 's': 50},
+                    line_kws={'color': 'red', 'linewidth': 2}
+                )
+                
+                # Calculate and display correlation
+                corr_val = corr_data[factor].corr(corr_data['Life Expectancy'])
+                data_points = len(corr_data)
+                ax_scatter.text(0.05, 0.95, f'Correlation: r = {corr_val:.3f}\nData points: {data_points}', 
+                               transform=ax_scatter.transAxes,
+                               fontsize=12, fontweight='bold',
+                               bbox=dict(boxstyle="round,pad=0.5", 
+                                        facecolor='yellow', 
+                                        alpha=0.8))
+                
+                ax_scatter.set_title(f'Life Expectancy vs {factor}: {title_text} ({year_min}-{year_max})\n(Zero values excluded)', 
+                                   fontsize=14, fontweight='bold')
+                ax_scatter.set_xlabel(factor, fontsize=12)
+                ax_scatter.set_ylabel('Life Expectancy (years)', fontsize=12)
+                ax_scatter.grid(True, alpha=0.3)
+                
+                plt.tight_layout()
+                
+                # Convert to base64
+                buffer_scatter = BytesIO()
+                fig_scatter.savefig(buffer_scatter, format='png', dpi=150, bbox_inches='tight')
+                buffer_scatter.seek(0)
+                img_scatter_b64 = base64.b64encode(buffer_scatter.getvalue()).decode()
+                plt.close(fig_scatter)
+                
+                pair_html = f'<img src="data:image/png;base64,{img_scatter_b64}" style="width:100%; max-width:800px; height:auto;">'
+            
+            # Create distribution plots for key factors (data already has 0 values removed)
+            fig_dist, axes_dist = plt.subplots(2, 2, figsize=(12, 8))
+            axes_dist = axes_dist.flatten()
+            
+            # Plot distributions for up to 4 factors
+            dist_factors = ['Life Expectancy'] + list(selected_factors)[:3]
+            
+            for i, factor in enumerate(dist_factors):
+                if i < 4:
+                    sns.histplot(
+                        data=corr_data, 
+                        x=factor, 
+                        kde=True, 
+                        ax=axes_dist[i],
+                        alpha=0.7,
+                        color=sns.color_palette("husl", len(dist_factors))[i]
+                    )
+                    axes_dist[i].set_title(f'Distribution of {factor}', fontweight='bold')
+                    axes_dist[i].grid(True, alpha=0.3)
+            
+            # Hide unused subplots
+            for i in range(len(dist_factors), 4):
+                axes_dist[i].set_visible(False)
+            
+            data_points_total = len(corr_data)
+            fig_dist.suptitle(f'Factor Distributions: {title_text}\n(Zero values excluded, n={data_points_total})', 
+                             fontsize=14, fontweight='bold')
+            plt.tight_layout()
+            
+            # Convert to base64
+            buffer_dist = BytesIO()
+            fig_dist.savefig(buffer_dist, format='png', dpi=150, bbox_inches='tight')
+            buffer_dist.seek(0)
+            img_dist_b64 = base64.b64encode(buffer_dist.getvalue()).decode()
+            plt.close(fig_dist)
+            
+            # Combine all plots in HTML
+            combined_html = f"""
+            <div style="text-align: center;">
+                <h3>Correlation Analysis: {title_text} ({year_min}-{year_max})</h3>
+                
+                <div style="margin-bottom: 30px;">
+                    <h4>📊 Correlation Heatmap</h4>
+                    <img src="data:image/png;base64,{img_corr_b64}" style="width:100%; max-width:800px; height:auto;">
+                </div>
+                
+                <div style="margin-bottom: 30px;">
+                    <h4>🔗 Factor Relationships</h4>
+                    {pair_html}
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <h4>📈 Factor Distributions</h4>
+                    <img src="data:image/png;base64,{img_dist_b64}" style="width:100%; max-width:900px; height:auto;">
+                </div>
+                
+                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: left;">
+                    <h5>📋 Analysis Summary:</h5>
+                    <ul>
+                        <li><strong>Data Quality:</strong> Zero values (missing data placeholders) have been excluded from analysis</li>
+                        <li><strong>Sample Size:</strong> {data_points_total} valid data points after cleaning</li>
+                        <li><strong>Strong Correlations (|r| > 0.7):</strong> Highly related factors</li>
+                        <li><strong>Moderate Correlations (0.3 < |r| < 0.7):</strong> Some relationship</li>
+                        <li><strong>Weak Correlations (|r| < 0.3):</strong> Little to no linear relationship</li>
+                        <li><strong>Positive values:</strong> Factors increase together</li>
+                        <li><strong>Negative values:</strong> One factor increases as other decreases</li>
+                    </ul>
+                </div>
+            </div>
+            """
+            
+            return ui.HTML(combined_html)
+            
+        except Exception as e:
+            # Fallback to simple correlation display
+            fig = px.scatter(title=f"Correlation Analysis: {title_text}")
+            fig.add_annotation(text=f"Error creating seaborn plots: {str(e)[:100]}...", 
+                              showarrow=False, font=dict(size=14))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+    
+    # Tab 4 - Spider Charts (REMOVED)
+    # @output
+    # @render.ui
+    # def comparison_spider_total():
+    #     # This function has been removed to simplify Tab 4
+    #     pass
+    
+    # Tab 5 - Enhanced Regression Model with multiple algorithms for both targets
+    @reactive.Calc
+    def regression_model():
+        # This will be triggered when the button is clicked
+        input.run_regression()  # This makes the calculation reactive to button clicks
+        
+        selected_factors = input.regression_factors()
+        
+        if not selected_factors:
+            return None
+        
+        # Convert tuple to list if necessary
+        selected_factors = list(selected_factors)
+        
+        # Prepare data for regression - analyze both targets
+        target_variables = ['Life Expectancy', 'Happiness Score']
+        required_columns = target_variables + selected_factors
+        reg_data = data.dropna(subset=required_columns)
+        
+        # Remove 0 values from target variables and factors
+        for col in required_columns:
+            if col in reg_data.columns:
+                reg_data = reg_data[reg_data[col] > 0]
+        
+        if len(reg_data) < 10:
+            return None
+        
+        try:
+            from sklearn.linear_model import LinearRegression
+            from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+            from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+            from sklearn.model_selection import train_test_split
+            from sklearn.preprocessing import StandardScaler
+            import numpy as np
+            
+            X = reg_data[selected_factors]
+            
+            # Analyze both targets
+            results = {}
+            
+            for target in target_variables:
+                y = reg_data[target]
+                
+                # Split data for proper evaluation
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+                
+                # Scale features for Linear Regression
+                scaler = StandardScaler()
+                X_train_scaled = scaler.fit_transform(X_train)
+                X_test_scaled = scaler.transform(X_test)
+                
+                # Define models to test
+                models = {
+                    'Linear Regression': {
+                        'model': LinearRegression(),
+                        'use_scaling': True
+                    },
+                    'Random Forest': {
+                        'model': RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10),
+                        'use_scaling': False
+                    },
+                    'Gradient Boosting': {
+                        'model': GradientBoostingRegressor(n_estimators=100, random_state=42, max_depth=6),
+                        'use_scaling': False
+                    }
+                }
+                
+                model_results = {}
+                
+                # Train and evaluate each model
+                for name, model_config in models.items():
+                    model = model_config['model']
+                    use_scaling = model_config['use_scaling']
+                    
+                    # Choose appropriate training data
+                    if use_scaling:
+                        X_train_final = X_train_scaled
+                        X_test_final = X_test_scaled
+                    else:
+                        X_train_final = X_train
+                        X_test_final = X_test
+                    
+                    # Train the model
+                    model.fit(X_train_final, y_train)
+                    
+                    # Make predictions
+                    y_pred_train = model.predict(X_train_final)
+                    y_pred_test = model.predict(X_test_final)
+                    
+                    # Calculate metrics
+                    train_r2 = r2_score(y_train, y_pred_train)
+                    test_r2 = r2_score(y_test, y_pred_test)
+                    test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+                    test_mae = mean_absolute_error(y_test, y_pred_test)
+                    
+                    # Store results
+                    model_results[name] = {
+                        'model': model,
+                        'train_r2': train_r2,
+                        'test_r2': test_r2,
+                        'rmse': test_rmse,
+                        'mae': test_mae,
+                        'use_scaling': use_scaling,
+                        'y_pred_test': y_pred_test,
+                        'overfitting': train_r2 - test_r2
+                    }
+                
+                # Select best model based on test R² score
+                best_model_name = max(model_results.keys(), key=lambda k: model_results[k]['test_r2'])
+                best_model_info = model_results[best_model_name]
+                best_model = best_model_info['model']
+                
+                # Make predictions on full dataset using the best model
+                if best_model_info['use_scaling']:
+                    X_full_scaled = scaler.fit_transform(X)
+                    y_pred_full = best_model.fit(X_full_scaled, y).predict(X_full_scaled)
                 else:
-                    # For other factors, scale to life expectancy range
-                    normalized_values = (plot_data[factor] / plot_data[factor].max()) * plot_data['Life Expectancy'].max()
+                    y_pred_full = best_model.fit(X, y).predict(X)
                 
-                line_style = dict(color=colors[i % len(colors)], width=2)
+                # Calculate final metrics on full dataset
+                final_r2 = r2_score(y, y_pred_full)
+                final_rmse = np.sqrt(mean_squared_error(y, y_pred_full))
                 
-                fig.add_scatter(x=plot_data['Year'], y=normalized_values, 
-                              mode='lines+markers', name=factor, 
-                              line=line_style)
+                # Create results summary for the best model
+                if hasattr(best_model, 'coef_'):
+                    coefficients = best_model.coef_
+                elif hasattr(best_model, 'feature_importances_'):
+                    coefficients = best_model.feature_importances_
+                else:
+                    coefficients = np.ones(len(selected_factors))
+                
+                results_list = []
+                for i, factor in enumerate(selected_factors):
+                    coef_value = coefficients[i]
+                    results_list.append({
+                        'Factor': factor,
+                        'Coefficient': coef_value,
+                        'Impact': 'Positive' if coef_value > 0 else 'Negative'
+                    })
+                
+                results_df = pd.DataFrame(results_list)
+                
+                # Feature importance based on absolute coefficients/importances
+                importance_df = pd.DataFrame({
+                    'Factor': selected_factors,
+                    'Importance': abs(coefficients),
+                    'Coefficient': coefficients,
+                    'Impact': ['Positive' if coef > 0 else 'Negative' for coef in coefficients]
+                }).sort_values('Importance', ascending=True)
+                
+                # Model comparison summary
+                comparison_df = pd.DataFrame({
+                    'Model': list(model_results.keys()),
+                    'Test R²': [model_results[name]['test_r2'] for name in model_results.keys()],
+                    'RMSE': [model_results[name]['rmse'] for name in model_results.keys()],
+                    'MAE': [model_results[name]['mae'] for name in model_results.keys()],
+                    'Overfitting': [model_results[name]['overfitting'] for name in model_results.keys()]
+                }).sort_values('Test R²', ascending=False)
+                
+                # Store results for this target
+                results[target] = {
+                    'best_model': best_model,
+                    'best_model_name': best_model_name,
+                    'data': reg_data,
+                    'X': X,
+                    'y': y,
+                    'y_pred': y_pred_full,
+                    'r2': final_r2,
+                    'rmse': final_rmse,
+                    'results_df': results_df,
+                    'importance_df': importance_df,
+                    'selected_factors': selected_factors,
+                    'model_comparison': comparison_df,
+                    'all_models': model_results,
+                    'scaler': scaler if best_model_info['use_scaling'] else None
+                }
+            
+            return {
+                'life_expectancy': results['Life Expectancy'],
+                'happiness_score': results['Happiness Score'],
+                'data': reg_data
+            }
+            
+        except ImportError:
+            return {'error': 'ImportError', 'message': 'scikit-learn not available. Install with: pip install scikit-learn'}
+        except Exception as e:
+            return {'error': 'Exception', 'message': f'Error in regression analysis: {str(e)}'}
+
+    @output
+    @render.ui
+    def regression_results():
+        model_result = regression_model()
         
-        # Update layout
+        if model_result is None:
+            return ui.div(
+                ui.p("Click 'Run Regression Analysis' to see results", 
+                     style="color: #666; font-style: italic;")
+            )
+        
+        if 'error' in model_result:
+            return ui.div(
+                ui.p(model_result['message'], 
+                     style="color: #dc3545; font-style: italic;")
+            )
+        
+        life_exp_results = model_result['life_expectancy']
+        happiness_results = model_result['happiness_score']
+        
+        return ui.div(
+            ui.h5("🎯 Analysis Summary"),
+            
+            # Life Expectancy Results
+            ui.div(
+                ui.h6("💗 Life Expectancy Model", style="color: #dc3545; margin-bottom: 10px;"),
+                ui.p(f"🏆 Best Model: {life_exp_results['best_model_name']}", style="margin-bottom: 5px;"),
+                ui.p(f"R² Score: {life_exp_results['r2']:.3f}", style="margin-bottom: 5px;"),
+                ui.p(f"RMSE: {life_exp_results['rmse']:.2f} years", style="margin-bottom: 10px;"),
+                style="background-color: #f8d7da; padding: 10px; border-radius: 5px; margin-bottom: 15px; border-left: 4px solid #dc3545;"
+            ),
+            
+            # Happiness Score Results
+            ui.div(
+                ui.h6("😊 Happiness Score Model", style="color: #28a745; margin-bottom: 10px;"),
+                ui.p(f"🏆 Best Model: {happiness_results['best_model_name']}", style="margin-bottom: 5px;"),
+                ui.p(f"R² Score: {happiness_results['r2']:.3f}", style="margin-bottom: 5px;"),
+                ui.p(f"RMSE: {happiness_results['rmse']:.2f} points", style="margin-bottom: 10px;"),
+                style="background-color: #d4edda; padding: 10px; border-radius: 5px; margin-bottom: 15px; border-left: 4px solid #28a745;"
+            ),
+            
+            ui.p(f"📊 Data Points: {len(model_result['data']):,}", style="text-align: center; font-weight: bold;"),
+            
+            style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #17a2b8;"
+        )
+
+    @output
+    @render.ui
+    def life_expectancy_plot():
+        model_result = regression_model()
+        
+        if model_result is None:
+            fig = px.scatter(title="Life Expectancy Prediction")
+            fig.add_annotation(text="Click 'Run Regression Analysis' to generate plot", 
+                              showarrow=False, font=dict(size=16))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+        
+        if 'error' in model_result:
+            fig = px.scatter(title="Life Expectancy Prediction")
+            fig.add_annotation(text=model_result['message'], 
+                              showarrow=False, font=dict(size=16))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+        
+        life_exp_results = model_result['life_expectancy']
+        reg_data = life_exp_results['data']
+        
+        y = life_exp_results['y']
+        y_pred = life_exp_results['y_pred']
+        
+        # Create predicted vs actual plot
+        fig = px.scatter(x=y, y=y_pred, 
+                        title="Predicted vs Actual Life Expectancy",
+                        labels={'x': 'Actual Life Expectancy', 'y': 'Predicted Life Expectancy'},
+                        hover_data={'Country': reg_data['Country'], 'Year': reg_data['Year']})
+        
+        # Add perfect prediction line
+        min_val = min(y.min(), y_pred.min())
+        max_val = max(y.max(), y_pred.max())
+        fig.add_scatter(x=[min_val, max_val], y=[min_val, max_val], 
+                       mode='lines', name='Perfect Prediction', 
+                       line=dict(color='red', dash='dash'))
+        
         fig.update_layout(
-            xaxis_title="Year",
-            yaxis_title="Normalized Values (Life Expectancy Scale)",
-            hovermode="x unified",
+            width=800,
+            height=400
+        )
+        
+        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+
+    @output
+    @render.ui
+    def happiness_prediction_plot():
+        model_result = regression_model()
+        
+        if model_result is None:
+            fig = px.scatter(title="Happiness Score Prediction")
+            fig.add_annotation(text="Click 'Run Regression Analysis' to generate plot", 
+                              showarrow=False, font=dict(size=16))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+        
+        if 'error' in model_result:
+            fig = px.scatter(title="Happiness Score Prediction")
+            fig.add_annotation(text=model_result['message'], 
+                              showarrow=False, font=dict(size=16))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+        
+        happiness_results = model_result['happiness_score']
+        reg_data = happiness_results['data']
+        
+        y = happiness_results['y']
+        y_pred = happiness_results['y_pred']
+        
+        # Create predicted vs actual plot
+        fig = px.scatter(x=y, y=y_pred, 
+                        title="Predicted vs Actual Happiness Score",
+                        labels={'x': 'Actual Happiness Score', 'y': 'Predicted Happiness Score'},
+                        hover_data={'Country': reg_data['Country'], 'Year': reg_data['Year']})
+        
+        # Add perfect prediction line
+        min_val = min(y.min(), y_pred.min())
+        max_val = max(y.max(), y_pred.max())
+        fig.add_scatter(x=[min_val, max_val], y=[min_val, max_val], 
+                       mode='lines', name='Perfect Prediction', 
+                       line=dict(color='red', dash='dash'))
+        
+        fig.update_layout(
+            width=800,
+            height=400
+        )
+        
+        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+
+    @output
+    @render.ui
+    def feature_importance():
+        model_result = regression_model()
+        
+        if model_result is None:
+            fig = px.bar(title="Feature Importance")
+            fig.add_annotation(text="Click 'Run Regression Analysis' to see feature importance", 
+                              showarrow=False, font=dict(size=16))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+        
+        if 'error' in model_result:
+            fig = px.bar(title="Feature Importance")
+            fig.add_annotation(text=model_result['message'], 
+                              showarrow=False, font=dict(size=16))
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
+        
+        # Get importance data for both targets
+        life_exp_importance = model_result['life_expectancy']['importance_df'].copy()
+        happiness_importance = model_result['happiness_score']['importance_df'].copy()
+        
+        # Create a combined dataframe for grouped bar chart
+        factors = life_exp_importance['Factor'].tolist()
+        
+        # Prepare data for grouped bar chart
+        combined_data = []
+        for factor in factors:
+            # Life expectancy importance
+            life_imp = life_exp_importance[life_exp_importance['Factor'] == factor]['Importance'].iloc[0]
+            life_coef = life_exp_importance[life_exp_importance['Factor'] == factor]['Coefficient'].iloc[0]
+            
+            # Happiness importance
+            happiness_imp = happiness_importance[happiness_importance['Factor'] == factor]['Importance'].iloc[0]
+            happiness_coef = happiness_importance[happiness_importance['Factor'] == factor]['Coefficient'].iloc[0]
+            
+            combined_data.append({
+                'Factor': factor,
+                'Life_Expectancy_Importance': life_imp,
+                'Happiness_Score_Importance': happiness_imp,
+                'Life_Expectancy_Impact': 'Positive' if life_coef > 0 else 'Negative',
+                'Happiness_Score_Impact': 'Positive' if happiness_coef > 0 else 'Negative'
+            })
+        
+        combined_df = pd.DataFrame(combined_data)
+        
+        # Create grouped bar chart using plotly
+        fig = px.bar()
+        
+        # Add Life Expectancy bars
+        fig.add_bar(
+            x=combined_df['Factor'],
+            y=combined_df['Life_Expectancy_Importance'],
+            name='Life Expectancy',
+            marker_color='#e74c3c',  # Red color for life expectancy
+            text=[f"{val:.3f}" for val in combined_df['Life_Expectancy_Importance']],
+            textposition='outside'
+        )
+        
+        # Add Happiness Score bars
+        fig.add_bar(
+            x=combined_df['Factor'],
+            y=combined_df['Happiness_Score_Importance'],
+            name='Happiness Score',
+            marker_color='#2ecc71',  # Green color for happiness
+            text=[f"{val:.3f}" for val in combined_df['Happiness_Score_Importance']],
+            textposition='outside'
+        )
+        
+        # Update layout for better appearance
+        fig.update_layout(
+            title="Feature Importance Comparison: Life Expectancy vs Happiness Score",
+            xaxis_title="Factors",
+            yaxis_title="Importance Score",
+            barmode='group',  # This creates grouped bars
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
@@ -766,315 +1372,126 @@ def server(input, output, session):
                 xanchor="right",
                 x=1
             ),
+            width=1000,
             height=600,
-            width=900
+            font=dict(size=12)
         )
         
+        # Rotate x-axis labels for better readability
+        fig.update_xaxes(tickangle=45)
+        
         return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-    
-    # Tab 4 - Spider Charts
-    @output
-    @render.ui
-    def comparison_spider_total():
-        countries = get_ranked_countries()
-        selected_factors = input.factors4()
-        year_min, year_max = input.years_range4()
-        rank_type = input.rank_type()
-        num_countries = input.num_countries()
-        
-        if not countries or not selected_factors:
-            fig = px.scatter(title="Total Life Expectancy Comparison")
-            fig.add_annotation(text="Select countries and factors first", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Get plot data
-        filtered_data = data[(data['Country'].isin(countries)) & 
-                           (data['Year'] >= year_min) & 
-                           (data['Year'] <= year_max)]
-        
-        if filtered_data.empty:
-            fig = px.scatter(title="Total Life Expectancy Comparison")
-            fig.add_annotation(text="No data available", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Calculate average across countries and years
-        agg_dict = {col: 'mean' for col in factor_choices + ['Life Expectancy'] if col in filtered_data.columns}
-        plot_data = filtered_data.agg(agg_dict).to_frame().T
-        plot_data['Year'] = year_max  # Add year for compatibility with helper function
-        
-        title_text = f"{rank_type.replace('Life Expectancy', '').strip()} {num_countries} Countries"
-        fig = create_spider_chart('Life Expectancy', f"Both male and female - {title_text}", selected_factors, plot_data)
-        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-    
-    @output
-    @render.ui
-    def comparison_spider_male():
-        countries = get_ranked_countries()
-        selected_factors = input.factors4()
-        year_min, year_max = input.years_range4()
-        rank_type = input.rank_type()
-        num_countries = input.num_countries()
-        
-        if not countries or not selected_factors:
-            fig = px.scatter(title="Male Life Expectancy Comparison")
-            fig.add_annotation(text="Select countries and factors first", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Get plot data
-        filtered_data = data[(data['Country'].isin(countries)) & 
-                           (data['Year'] >= year_min) & 
-                           (data['Year'] <= year_max)]
-        
-        if filtered_data.empty:
-            fig = px.scatter(title="Male Life Expectancy Comparison")
-            fig.add_annotation(text="No data available", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Calculate average across countries and years
-        male_col = 'Life Expectancy Male' if 'Life Expectancy Male' in filtered_data.columns else None
-        agg_dict = {col: 'mean' for col in factor_choices + ([male_col] if male_col else []) if col in filtered_data.columns}
-        plot_data = filtered_data.agg(agg_dict).to_frame().T
-        plot_data['Year'] = year_max  # Add year for compatibility with helper function
-        
-        title_text = f"{rank_type.replace('Life Expectancy', '').strip()} {num_countries} Countries"
-        fig = create_spider_chart('Life Expectancy Male', f"Male - {title_text}", selected_factors, plot_data)
-        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-    
-    @output
-    @render.ui
-    def comparison_spider_female():
-        countries = get_ranked_countries()
-        selected_factors = input.factors4()
-        year_min, year_max = input.years_range4()
-        rank_type = input.rank_type()
-        num_countries = input.num_countries()
-        
-        if not countries or not selected_factors:
-            fig = px.scatter(title="Female Life Expectancy Comparison")
-            fig.add_annotation(text="Select countries and factors first", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Get plot data
-        filtered_data = data[(data['Country'].isin(countries)) & 
-                           (data['Year'] >= year_min) & 
-                           (data['Year'] <= year_max)]
-        
-        if filtered_data.empty:
-            fig = px.scatter(title="Female Life Expectancy Comparison")
-            fig.add_annotation(text="No data available", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Calculate average across countries and years
-        female_col = 'Life Expectancy Female' if 'Life Expectancy Female' in filtered_data.columns else None
-        agg_dict = {col: 'mean' for col in factor_choices + ([female_col] if female_col else []) if col in filtered_data.columns}
-        plot_data = filtered_data.agg(agg_dict).to_frame().T
-        plot_data['Year'] = year_max  # Add year for compatibility with helper function
-        
-        title_text = f"{rank_type.replace('Life Expectancy', '').strip()} {num_countries} Countries"
-        fig = create_spider_chart('Life Expectancy Female', f"Female - {title_text}", selected_factors, plot_data)
-        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-    
-    # Spider Charts for Life Expectancy Types
-    def create_spider_chart(life_exp_col, chart_title, selected_factors, plot_data):
-        """Helper function to create spider charts"""
-        if life_exp_col not in plot_data.columns or plot_data[life_exp_col].isna().all():
-            fig = px.scatter(title=f"{chart_title} - No Data Available")
-            fig.add_annotation(text="No data", showarrow=False, font=dict(size=14))
-            return fig
-        
-        # Get the latest year data for spider chart
-        latest_year = plot_data['Year'].max()
-        latest_data = plot_data[plot_data['Year'] == latest_year]
-        
-        if latest_data.empty:
-            fig = px.scatter(title=f"{chart_title} - No Data Available")
-            fig.add_annotation(text="No data", showarrow=False, font=dict(size=14))
-            return fig
-        
-        # Prepare data for spider chart
-        spider_data = []
-        
-        # Add life expectancy
-        life_exp_value = latest_data[life_exp_col].iloc[0]
-        
-        # Add selected factors (normalized to life expectancy scale)
-        for factor in selected_factors:
-            if factor in latest_data.columns:
-                factor_value = latest_data[factor].iloc[0]
-                
-                # Replace NaN with mean from the entire plot_data
-                if pd.isna(factor_value):
-                    factor_value = plot_data[factor].mean()
-                    # If mean is still NaN (all values are NaN), skip this factor
-                    if pd.isna(factor_value):
-                        continue
-                
-                # Normalize to life expectancy scale
-                if factor == 'Happiness Score':
-                    normalized_value = (factor_value / 10) * life_exp_value
-                elif factor == 'GDP per Capita':
-                    max_gdp = plot_data[factor].max()
-                    normalized_value = (factor_value / max_gdp) * life_exp_value if max_gdp > 0 else 0
-                else:
-                    max_factor = plot_data[factor].max()
-                    normalized_value = (factor_value / max_factor) * life_exp_value if max_factor > 0 else 0
-                
-                spider_data.append({
-                    'factor': factor,
-                    'value': factor_value,
-                    'normalized': normalized_value
-                })
 
-        if len(spider_data) < 2:
-            fig = px.scatter(title=f"{chart_title} - Insufficient Data")
-            fig.add_annotation(text="Need more factors", showarrow=False, font=dict(size=14))
-            return fig
+    # Correlation Analysis - Updated for dual targets
+    @reactive.Calc
+    def correlation_analysis():
+        selected_factors = input.regression_factors()
         
-        # Create spider chart
-        import plotly.graph_objects as go
+        if not selected_factors:
+            return None
         
-        categories = [item['factor'] for item in spider_data]
-        values = [item['normalized'] for item in spider_data]
+        try:
+            from scipy.stats import pearsonr, spearmanr
+            import pandas as pd
+            
+            # Analyze correlations for both targets
+            target_variables = ['Life Expectancy', 'Happiness Score']
+            required_columns = target_variables + list(selected_factors)
+            corr_data = data.dropna(subset=required_columns)
+            
+            # Remove 0 values
+            for col in required_columns:
+                if col in corr_data.columns:
+                    corr_data = corr_data[corr_data[col] > 0]
+            
+            if len(corr_data) < 10:
+                return None
+            
+            all_correlations = {}
+            
+            for target in target_variables:
+                correlations = []
+                for factor in selected_factors:
+                    # Pearson correlation
+                    pearson_r, pearson_p = pearsonr(corr_data[target], corr_data[factor])
+                    # Spearman correlation (for non-linear relationships)
+                    spearman_r, spearman_p = spearmanr(corr_data[target], corr_data[factor])
+                    
+                    correlations.append({
+                        'Factor': factor,
+                        'Pearson_r': pearson_r,
+                        'Pearson_p': pearson_p,
+                        'Spearman_r': spearman_r,
+                        'Spearman_p': spearman_p,
+                        'Significance': 'Significant' if pearson_p < 0.05 else 'Not Significant'
+                    })
+                
+                all_correlations[target] = pd.DataFrame(correlations)
+            
+            return {
+                'life_expectancy': all_correlations['Life Expectancy'],
+                'happiness_score': all_correlations['Happiness Score']
+            }
+            
+        except ImportError:
+            return {'error': 'scipy not available'}
+        except Exception as e:
+            return {'error': str(e)}
+
+    @output
+    @render.ui
+    def correlation_results():
+        corr_result = correlation_analysis()
         
-        fig = go.Figure()
+        if corr_result is None:
+            return ui.div(
+                ui.p("Select factors to see correlation analysis", 
+                     style="color: #666; font-style: italic;")
+            )
         
-        fig.add_trace(go.Scatterpolar(
-            r=values,
-            theta=categories,
-            fill='toself',
-            name=chart_title.split(' - ')[0],
-            line_color='rgba(255, 0, 0, 0.8)',
-            fillcolor='rgba(255, 0, 0, 0.2)'
-        ))
+        if 'error' in corr_result:
+            return ui.div(
+                ui.p(str(corr_result['error']), 
+                     style="color: #dc3545; font-style: italic;")
+            )
         
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, max(values) * 1.1] if values else [0, 100]
-                )),
-            showlegend=False,
-            title=dict(text=chart_title, x=0.5, font=dict(size=14)),
-            # height=350,
-            # width=450,
-            margin=dict(l=20, r=20, t=40, b=20)
+        life_exp_corr = corr_result['life_expectancy']
+        happiness_corr = corr_result['happiness_score']
+        
+        # Display correlation results for both targets
+        def create_correlation_section(corr_df, target_name, color):
+            rows = []
+            for _, row in corr_df.iterrows():
+                significance_icon = "✅" if row['Significance'] == "Significant" else "❌"
+                rows.append(
+                    ui.div(
+                        ui.p(f"{significance_icon} {row['Factor']}: ρ = {row['Pearson_r']:.3f} (p = {row['Pearson_p']:.3f})", 
+                             style="margin-bottom: 4px;"),
+                        style="font-size: 0.9em; color: #333;"
+                    )
+                )
+            return ui.div(
+                ui.h6(f"📊 {target_name}"),
+                *rows,
+                style=f"background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid {color}; margin-bottom: 15px;"
+            )
+        
+        return ui.div(
+            ui.h5("🔗 Correlation Analysis Results"),
+            create_correlation_section(life_exp_corr, "Life Expectancy Correlations", "#dc3545"),
+            create_correlation_section(happiness_corr, "Happiness Score Correlations", "#28a745"),
+            
+            ui.div(
+                ui.h6("📋 Interpretation Guide:"),
+                ui.div(
+                    ui.p("• ✅ Significant correlations (p < 0.05) indicate reliable relationships", style="margin-bottom: 5px;"),
+                    ui.p("• ❌ Non-significant correlations may be due to chance", style="margin-bottom: 5px;"),
+                    ui.p("• Strong correlations: |ρ| > 0.7", style="margin-bottom: 5px;"),
+                    ui.p("• Moderate correlations: 0.3 < |ρ| < 0.7", style="margin-bottom: 5px;"),
+                    ui.p("• Weak correlations: |ρ| < 0.3", style="margin-bottom: 0px;")
+                ),
+                style="background-color: #e9ecef; padding: 15px; border-radius: 8px; margin-top: 15px;"
+            )
         )
-        
-        return fig
-    
-    @output
-    @render.ui
-    def spider_total():
-        view_type = input.view_type3()
-        year_min, year_max = input.years_range3()
-        selected_factors = input.factors3()
-        
-        if not selected_factors:
-            fig = px.scatter(title="Total Life Expectancy")
-            fig.add_annotation(text="Select factors first", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Get plot data (same logic as economic_plot)
-        if view_type == "Country View":
-            selected_country = input.country3()
-            plot_data = data[(data['Country'] == selected_country) & 
-                           (data['Year'] >= year_min) & 
-                           (data['Year'] <= year_max)]
-            title_location = selected_country
-        else:
-            selected_continent = input.continent3()
-            if selected_continent in continents_data:
-                continent_countries = continents_data[selected_continent]
-                continent_data = data[
-                    (data['Country'].isin(continent_countries)) & 
-                    (data['Year'] >= year_min) & 
-                    (data['Year'] <= year_max)
-                ]
-                agg_dict = {col: 'mean' for col in factor_choices + ['Life Expectancy'] if col in continent_data.columns}
-                plot_data = continent_data.groupby('Year').agg(agg_dict).reset_index()
-                title_location = selected_continent
-            else:
-                plot_data = pd.DataFrame()
 
-        fig = create_spider_chart('Life Expectancy', f"Both male and female - {title_location}", selected_factors, plot_data)
-        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-    
-    @output
-    @render.ui
-    def spider_male():
-        view_type = input.view_type3()
-        year_min, year_max = input.years_range3()
-        selected_factors = input.factors3()
-        
-        if not selected_factors:
-            fig = px.scatter(title="Male Life Expectancy")
-            fig.add_annotation(text="Select factors first", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Get plot data (same logic as economic_plot)
-        if view_type == "Country View":
-            selected_country = input.country3()
-            plot_data = data[(data['Country'] == selected_country) & 
-                           (data['Year'] >= year_min) & 
-                           (data['Year'] <= year_max)]
-            title_location = selected_country
-        else:
-            selected_continent = input.continent3()
-            if selected_continent in continents_data:
-                continent_countries = continents_data[selected_continent]
-                continent_data = data[
-                    (data['Country'].isin(continent_countries)) & 
-                    (data['Year'] >= year_min) & 
-                    (data['Year'] <= year_max)
-                ]
-                # Include male life expectancy in aggregation if it exists
-                male_col = 'Life Expectancy Male' if 'Life Expectancy Male' in continent_data.columns else None
-                agg_dict = {col: 'mean' for col in factor_choices + ([male_col] if male_col else []) if col in continent_data.columns}
-                plot_data = continent_data.groupby('Year').agg(agg_dict).reset_index()
-                title_location = selected_continent
-            else:
-                plot_data = pd.DataFrame()
-        
-        fig = create_spider_chart('Life Expectancy Male', f"Male - {title_location}", selected_factors, plot_data)
-        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-    
-    @output
-    @render.ui
-    def spider_female():
-        view_type = input.view_type3()
-        year_min, year_max = input.years_range3()
-        selected_factors = input.factors3()
-        
-        if not selected_factors:
-            fig = px.scatter(title="Female Life Expectancy")
-            fig.add_annotation(text="Select factors first", showarrow=False, font=dict(size=12))
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-        
-        # Get plot data (same logic as economic_plot)
-        if view_type == "Country View":
-            selected_country = input.country3()
-            plot_data = data[(data['Country'] == selected_country) & 
-                           (data['Year'] >= year_min) & 
-                           (data['Year'] <= year_max)]
-            title_location = selected_country
-        else:
-            selected_continent = input.continent3()
-            if selected_continent in continents_data:
-                continent_countries = continents_data[selected_continent]
-                continent_data = data[
-                    (data['Country'].isin(continent_countries)) & 
-                    (data['Year'] >= year_min) & 
-                    (data['Year'] <= year_max)
-                ]
-                # Include female life expectancy in aggregation if it exists
-                female_col = 'Life Expectancy Female' if 'Life Expectancy Female' in continent_data.columns else None
-                agg_dict = {col: 'mean' for col in factor_choices + ([female_col] if female_col else []) if col in continent_data.columns}
-                plot_data = continent_data.groupby('Year').agg(agg_dict).reset_index()
-                title_location = selected_continent
-            else:
-                plot_data = pd.DataFrame()
-        
-        fig = create_spider_chart('Life Expectancy Female', f"Female - {title_location}", selected_factors, plot_data)
-        return ui.HTML(fig.to_html(include_plotlyjs="cdn"))
-    
 app = App(app_ui, server)
